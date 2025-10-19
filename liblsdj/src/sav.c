@@ -352,7 +352,7 @@ lsdj_error_t decompress_blocks(lsdj_vio_t* rvio, header_t* header, lsdj_project_
             if (result != LSDJ_SUCCESS)
             {
                 lsdj_project_free(project);
-                return false;
+                continue;
             }
             
             assert(writeCounter == LSDJ_SONG_BYTE_COUNT);

@@ -1,4 +1,5 @@
 #include <lsdj/sav.h>
+#include <lsdj/compression.h>
 
 #include <algorithm>
 #include <array>
@@ -344,5 +345,115 @@ TEST_CASE( ".sav save/load", "[sav]" )
         REQUIRE( lsdj_sav_is_likely_valid_file(RESOURCES_FOLDER "sav/happy_birthday.sav") == true );
         REQUIRE( lsdj_sav_is_likely_valid_file(RESOURCES_FOLDER "lsdsng/happy_birthday.lsdsng") == false );
         REQUIRE( lsdj_sav_is_likely_valid_file(RESOURCES_FOLDER "raw/happy_birthday.raw") == false );
+	}
+
+	SECTION( "Skipping corrupted projects" )
+	{
+		lsdj_sav_t* sav = nullptr;
+		REQUIRE( lsdj_sav_new(&sav, nullptr) == LSDJ_SUCCESS );
+
+		for (uint8_t i = 0; i < 6; i += 1) {
+			lsdj_project_t* project = nullptr;
+			REQUIRE( lsdj_project_new(&project, nullptr) == LSDJ_SUCCESS );
+			char name[9];
+			snprintf(name, sizeof(name), "VALID%d", i);
+			lsdj_project_set_name(project, name);
+			lsdj_sav_set_project_move(sav, i, project);
+		}
+
+		std::array<uint8_t, LSDJ_SAV_SIZE> memory;
+		size_t writeCount = 0;
+		REQUIRE( lsdj_sav_write_to_memory(sav, memory.data(), memory.size(), &writeCount) == LSDJ_SUCCESS );
+		lsdj_sav_free(sav);
+
+		// Corrupt project 3 by writing EOF marker at start of its compressed data
+		const size_t blockAllocTableOffset = 0x8000 + 321;
+		size_t slot3BlockIndex = 0;
+		for (size_t i = 0; i < LSDJ_BLOCK_COUNT; i += 1) {
+			if (memory[blockAllocTableOffset + i] == 3) {
+				slot3BlockIndex = i;
+				break;
+			}
+		}
+		const size_t firstBlockPosition = 0x8200;
+		size_t slot3DataStart = firstBlockPosition + (slot3BlockIndex * LSDJ_BLOCK_SIZE);
+		memory[slot3DataStart] = 0xE0;
+		memory[slot3DataStart + 1] = 0xFF;
+
+		lsdj_sav_t* corruptedSav = nullptr;
+		REQUIRE( lsdj_sav_read_from_memory(memory.data(), memory.size(), &corruptedSav, nullptr) == LSDJ_SUCCESS );
+		REQUIRE( corruptedSav != nullptr );
+
+		for (uint8_t i = 0; i < 3; i += 1) {
+			auto project = lsdj_sav_get_project_const(corruptedSav, i);
+			REQUIRE( project != nullptr );
+			char expectedName[9];
+			snprintf(expectedName, sizeof(expectedName), "VALID%d", i);
+			REQUIRE( strcmp(lsdj_project_get_name(project), expectedName) == 0 );
+		}
+
+		auto corruptedProject = lsdj_sav_get_project_const(corruptedSav, 3);
+		REQUIRE( corruptedProject == nullptr );
+
+		for (uint8_t i = 4; i < 6; i += 1) {
+			auto project = lsdj_sav_get_project_const(corruptedSav, i);
+			REQUIRE( project != nullptr );
+			char expectedName[9];
+			snprintf(expectedName, sizeof(expectedName), "VALID%d", i);
+			REQUIRE( strcmp(lsdj_project_get_name(project), expectedName) == 0 );
+		}
+
+		lsdj_sav_free(corruptedSav);
+	}
+
+	SECTION( "Skipping corrupted first project" )
+	{
+		lsdj_sav_t* sav = nullptr;
+		REQUIRE( lsdj_sav_new(&sav, nullptr) == LSDJ_SUCCESS );
+
+		for (uint8_t i = 0; i < 6; i += 1) {
+			lsdj_project_t* project = nullptr;
+			REQUIRE( lsdj_project_new(&project, nullptr) == LSDJ_SUCCESS );
+			char name[9];
+			snprintf(name, sizeof(name), "VALID%d", i);
+			lsdj_project_set_name(project, name);
+			lsdj_sav_set_project_move(sav, i, project);
+		}
+
+		std::array<uint8_t, LSDJ_SAV_SIZE> memory;
+		size_t writeCount = 0;
+		REQUIRE( lsdj_sav_write_to_memory(sav, memory.data(), memory.size(), &writeCount) == LSDJ_SUCCESS );
+		lsdj_sav_free(sav);
+
+		// Corrupt project 0 by writing EOF marker at start of its compressed data
+		const size_t blockAllocTableOffset = 0x8000 + 321;
+		size_t slot0BlockIndex = 0;
+		for (size_t i = 0; i < LSDJ_BLOCK_COUNT; i += 1) {
+			if (memory[blockAllocTableOffset + i] == 0) {
+				slot0BlockIndex = i;
+				break;
+			}
+		}
+		const size_t firstBlockPosition = 0x8200;
+		size_t slot0DataStart = firstBlockPosition + (slot0BlockIndex * LSDJ_BLOCK_SIZE);
+		memory[slot0DataStart] = 0xE0;
+		memory[slot0DataStart + 1] = 0xFF;
+
+		lsdj_sav_t* corruptedSav = nullptr;
+		REQUIRE( lsdj_sav_read_from_memory(memory.data(), memory.size(), &corruptedSav, nullptr) == LSDJ_SUCCESS );
+		REQUIRE( corruptedSav != nullptr );
+
+		auto corruptedProject = lsdj_sav_get_project_const(corruptedSav, 0);
+		REQUIRE( corruptedProject == nullptr );
+
+		for (uint8_t i = 1; i < 6; i += 1) {
+			auto project = lsdj_sav_get_project_const(corruptedSav, i);
+			REQUIRE( project != nullptr );
+			char expectedName[9];
+			snprintf(expectedName, sizeof(expectedName), "VALID%d", i);
+			REQUIRE( strcmp(lsdj_project_get_name(project), expectedName) == 0 );
+		}
+
+		lsdj_sav_free(corruptedSav);
 	}
 }
